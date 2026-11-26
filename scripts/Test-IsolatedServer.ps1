@@ -55,7 +55,8 @@ try {
         try { $info=Request 'System/Info/Public';$null=Request 'Startup/User';$ready=$true;break } catch { Start-Sleep -Milliseconds 500 }
     }
     Expect $ready 'Isolated Jellyfin responds'
-    Expect ($info.Version -eq '12.2.0') 'Correct Jellyfin host version'
+    $expectedJellyfin=([xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot '..' 'Directory.Build.props') -Raw)).Project.PropertyGroup.DefaultJellyfinVersion
+    Expect ($info.Version -eq $expectedJellyfin) 'Correct Jellyfin host version'
     $listeners=@([Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Where-Object Port -eq $Port)
     Expect ($listeners.Count -gt 0 -and ($listeners | Where-Object { $_.Address.ToString() -ne '127.0.0.1' }).Count -eq 0) 'Test server binds only loopback'
     $password=[Guid]::NewGuid().ToString('N')+'!aA9'
@@ -67,7 +68,7 @@ try {
     Expect (![string]::IsNullOrWhiteSpace($login.AccessToken)) 'Admin login returns a session token'
     $admin=@{Authorization=$clientHeaders.Authorization + ', Token="' + $login.AccessToken + '"'}
     $plugins=@(Request 'Plugins' 'GET' $null $admin)
-    $plugin=$plugins | Where-Object { ([string]$_.Id).Replace('-','') -eq '8fa53208c9f34e9998582963ed658aae' }
+    $plugin=$plugins | Where-Object { ([string]$_.Id).Replace('-','') -eq '267f4d8ef04c49ab9373f721912cee86' }
     Write-Output ($plugin | Select-Object Name,Id,Status,Version | ConvertTo-Json -Compress)
     Expect ($plugin.Status -eq 'Active') 'Plugin discovered and active'
     Expect ((Status 'ThemeManager/Catalog') -eq 401) 'Anonymous catalog access rejected'

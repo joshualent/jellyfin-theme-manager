@@ -1,11 +1,14 @@
 # Development status
 
-Updated 19 October 2026 for version 0.3.4.0 (preview). User documentation is in the [README](../README.md) and [CUSTOM-THEMES.md](CUSTOM-THEMES.md).
+Updated 26 November 2026 for version 0.4.0.0 (preview), the first release of this fork.
+
+This repository (`joshualent/jellyfin-theme-manager`) is a separately managed fork of [KsH1/jellyfin-theme-manager](https://github.com/KsH1/jellyfin-theme-manager) at 0.3.4.0. It has its own plugin GUID (`267f4d8e-f04c-49ab-9373-f721912cee86`) and its own repository manifest, so it installs and updates independently of the original plugin. History below 0.4.0 is the original project's. User documentation is in the [README](../README.md) and [CUSTOM-THEMES.md](CUSTOM-THEMES.md).
 
 ## Supported
 
-- Jellyfin 12.0, 12.1 and 12.2, one build per version (`targetAbi` 12.0.0.0, 12.1.0.0, 12.2.0.0), .NET 10.
-- Installed from the plugin repository `repository/manifest.json` on GitHub. Plugin ZIPs are GitHub release assets. Versions before 0.3.0 were removed from the manifest and from git history on 19 October 2026; installed servers update to 0.3.0 or later.
+- Jellyfin 12.4 (`targetAbi` 12.4.0.0), .NET 10. The target version is `DefaultJellyfinVersion` in `Directory.Build.props`; more versions can be added to `JELLYFIN_VERSIONS` in the release workflow.
+- Upstream releases up to 0.3.4.0 targeted 12.0, 12.1 and 12.2.
+- Installed from the plugin repository `repository/manifest.json` on GitHub. Plugin ZIPs are GitHub release assets. The fork's manifest starts empty and lists only this fork's releases.
 - Jellyfin 10.x is not supported.
 
 ## Built
@@ -24,7 +27,11 @@ Updated 19 October 2026 for version 0.3.4.0 (preview). User documentation is in 
 | Status | Settings page shows web-client state, versions, and when a newer installed version needs a full restart. |
 | Release | GitHub Actions workflow on tag `v*`: tests, builds for all three Jellyfin versions, creates the release and commits the manifest. |
 
-## Verified
+## Verified on Jellyfin 12.4 (26 November 2026)
+
+On a clean Jellyfin 12.4.0 server (Debian 13, Linux tarball): `dotnet test` 103 passed and client tests 33 passed against the 12.4.0 packages; the 0.4.0.0 package installed from a repository manifest via the catalog, loaded as *Active* after a restart, installed all 29 themes, and its API, settings page and asset previews answered. File Transformation 3.0.3.0 (12.4 build) registered the web injection; in headless Chromium the home screen showed the Christmas theme and banners, the theme picker opened, and there were no console errors.
+
+## Verified (upstream, Jellyfin 12.2)
 
 Every test below starts its own Jellyfin with empty data on a loopback port; none touches a running server.
 

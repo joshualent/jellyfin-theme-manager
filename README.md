@@ -4,7 +4,9 @@
 
 Seasonal and permanent themes for Jellyfin Web. Each user picks their own theme, follows the server default, or uses a calendar. Library cards get themed banners; any library without its own banner gets one with its name. Server branding, Custom CSS and library images are not changed.
 
-**Status:** preview, for **Jellyfin 12.0, 12.1 and 12.2**. Each Jellyfin version gets its own build; Jellyfin picks the right one. 12.2 is fully tested. 12.0 and 12.1 are confirmed to install from the catalog and run on real 12.0 and 12.1 servers. Jellyfin 10.x is not supported.
+**Status:** preview, for **Jellyfin 12.4**. Jellyfin 10.x is not supported.
+
+> This is a separately managed fork of [KsH1/jellyfin-theme-manager](https://github.com/KsH1/jellyfin-theme-manager), updated for Jellyfin 12.4. It has its own plugin ID and repository, so it does not receive updates from, or conflict with the catalog entry of, the original plugin. If you have the original Theme Manager installed, uninstall it before installing this one.
 
 ![The Jellyfin home screen with the Halloween theme: themed Movies and TV Shows banners and a generic Music banner](docs/images/use-0-home.png)
 
@@ -26,7 +28,7 @@ flowchart LR
 **Dashboard → Plugins → Manage Repositories → New Repository**. Use any name, for example *Theme Manager*, and this URL:
 
 ```text
-https://raw.githubusercontent.com/KsH1/jellyfin-theme-manager/main/repository/manifest.json
+https://raw.githubusercontent.com/joshualent/jellyfin-theme-manager/main/repository/manifest.json
 ```
 
 Click **Add**.
@@ -116,7 +118,7 @@ The 29 standard themes (`default-packs/`) are 19 calendar themes with artwork (m
 | You see | Do this |
 |---|---|
 | A puzzle-piece image, and a message that the plugin details could not be fetched from the repository | The repository from step 1 is missing. Add it and reload the page. |
-| Theme Manager is not in **Available** | Check the repository URL, then reload the page. Your Jellyfin must be 12.0, 12.1 or 12.2; Jellyfin hides plugins built for other versions. |
+| Theme Manager is not in **Available** | Check the repository URL, then reload the page. Your Jellyfin must be 12.4; Jellyfin hides plugins built for other versions. |
 | No theme and no **Themes** button at the normal address | Check that **Where users see themes** says *Active*. If it says File Transformation is missing, do step 3 and restart. Otherwise reload the page. |
 | Status *NotSupported* | The installed build does not match your Jellyfin version. Uninstall it and install again from **Available**. |
 | A new version is not offered yet | GitHub keeps a copy of the repository for up to five minutes. Wait a few minutes and reload the plugin page. |
@@ -151,7 +153,7 @@ Requirements: .NET SDK 10 and PowerShell 7 for the scripts.
 dotnet restore ThemeManager.slnx --locked-mode
 dotnet test ThemeManager.slnx -c Release --no-restore
 node --test tests/client/core.test.mjs
-./scripts/Build-Package.ps1 [-JellyfinVersion 12.1.0]    # tests, builds, artifacts/build-<time>/
+./scripts/Build-Package.ps1 [-JellyfinVersion 12.3.0]    # tests, builds, artifacts/build-<time>/ (default: DefaultJellyfinVersion)
 ./scripts/Test-IsolatedServer.ps1                        # throw-away Jellyfin on loopback port 18196
 ./scripts/Test-ServerImages.ps1                          # library images for apps: set, back up, restore
 ./scripts/Test-DefaultPacks.ps1 -Package artifacts/build-<time>
@@ -159,16 +161,18 @@ node --test tests/client/core.test.mjs
 ./scripts/Test-CatalogInstall.ps1 [-JellyfinExecutable <other Jellyfin>/jellyfin.exe]   # install from the published repository
 ```
 
-The test scripts start a Jellyfin binary with new, empty data folders under `test-server/` (ignored by git). They never touch a running server on port 8096/18096. The version is set only in `Directory.Build.props`.
+The target Jellyfin version is `DefaultJellyfinVersion` in `Directory.Build.props` (12.4.0); the lock file `src/Jellyfin.Plugin.ThemeManager/packages.lock.json` is for that version. The test scripts start a Jellyfin binary with new, empty data folders under `test-server/` (ignored by git). They never touch a running server on port 8096/18096. The version is set only in `Directory.Build.props`.
+
+**Moving to a newer Jellyfin:** set `DefaultJellyfinVersion` in `Directory.Build.props` and `JELLYFIN_VERSIONS` in the release workflow, run `dotnet restore ThemeManager.slnx --force-evaluate` to refresh the lock file, test against the new server, then release.
 
 **Releasing:** bump `<Version>` in `Directory.Build.props`, commit and push to `main`, then push an annotated tag on that commit:
 
 ```bash
-git tag -a v0.3.0 -m "What changed, in one line"
-git push origin v0.3.0
+git tag -a v0.4.1 -m "What changed, in one line"
+git push origin v0.4.1
 ```
 
-The *Release* workflow tests and builds for Jellyfin 12.0, 12.1 and 12.2, attaches the ZIPs to a GitHub release and commits the updated `repository/manifest.json`. Plugin ZIPs are not committed to git.
+The *Release* workflow tests and builds for every Jellyfin version in `JELLYFIN_VERSIONS` (`.github/workflows/release.yml`, currently 12.4.0), attaches the ZIPs to a GitHub release and commits the updated `repository/manifest.json`. Plugin ZIPs are not committed to git.
 
 ## Layout
 

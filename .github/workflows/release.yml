@@ -12,9 +12,10 @@ concurrency:
   cancel-in-progress: false
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     env:
-      JELLYFIN_VERSIONS: '12.0.0 12.1.0 12.2.0'
+      # Jellyfin versions to build for, space separated. DefaultJellyfinVersion in Directory.Build.props must be one of them.
+      JELLYFIN_VERSIONS: '12.4.0'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,11 +30,14 @@ jobs:
       - name: Check the tag
         shell: pwsh
         run: |
-          $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+          $props = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup
+          $version = $props.Version
+          if (($env:JELLYFIN_VERSIONS -split ' ') -notcontains $props.DefaultJellyfinVersion) { throw "JELLYFIN_VERSIONS must include DefaultJellyfinVersion $($props.DefaultJellyfinVersion)." }
           if ('${{ github.ref_name }}' -ne "v$version") { throw "Tag ${{ github.ref_name }} does not match version $version in Directory.Build.props." }
           # The manifest is committed to main, so the tag must be main's newest commit.
           if ((git rev-parse HEAD) -ne (git rev-list -n 1 '${{ github.ref_name }}')) { throw 'Tag the newest commit on main.' }
           "VERSION=$version.0" >> $env:GITHUB_ENV
+          "DEFAULT_JF=$($props.DefaultJellyfinVersion)" >> $env:GITHUB_ENV
       - name: Client tests
         run: node --test tests/client/core.test.mjs
       - name: Build, test and package for each Jellyfin version
@@ -45,9 +49,9 @@ jobs:
           foreach ($jf in $env:JELLYFIN_VERSIONS -split ' ') {
             ./scripts/Build-Package.ps1 -JellyfinVersion $jf
             if ($LASTEXITCODE) { throw "Build for Jellyfin $jf failed." }
-            $filter = if ($jf -eq '12.2.0') { 'build-*' } else { "*-jf$jf" }
-            $package = Get-ChildItem artifacts -Directory -Filter $filter | Where-Object { $jf -ne '12.2.0' -or $_.Name -notlike '*-jf*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            ./scripts/Build-Repository.ps1 -Package "artifacts\$($package.Name)" -TargetAbi "$jf.0" -Changelog $changelog -BaseUrl $base
+            $filter = if ($jf -eq $env:DEFAULT_JF) { 'build-*' } else { "*-jf$jf" }
+            $package = Get-ChildItem artifacts -Directory -Filter $filter | Where-Object { $jf -ne $env:DEFAULT_JF -or $_.Name -notlike '*-jf*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            ./scripts/Build-Repository.ps1 -Package "artifacts/$($package.Name)" -TargetAbi "$jf.0" -Changelog $changelog -BaseUrl $base
           }
           "CHANGELOG=$changelog" >> $env:GITHUB_ENV
       - name: Create the GitHub release

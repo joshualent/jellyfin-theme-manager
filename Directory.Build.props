@@ -1,4 +1,4 @@
-﻿<Project>
+<Project>
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -6,8 +6,10 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
     <Deterministic>true</Deterministic>
-    <Version>0.3.4</Version>
-    <Authors>Kenneth</Authors>
+    <Version>0.4.0</Version>
+    <!-- The Jellyfin server version this plugin is built and released for. Scripts and the release workflow read it from here. -->
+    <DefaultJellyfinVersion>12.4.0</DefaultJellyfinVersion>
+    <Authors>Kenneth; Joshua Lent</Authors>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestorePackagesPath>$(MSBuildThisFileDirectory).packages</RestorePackagesPath>

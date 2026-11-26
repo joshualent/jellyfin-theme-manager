@@ -1,14 +1,14 @@
 [CmdletBinding()]
 param(
     [string]$JellyfinExecutable = 'C:\Program Files\Jellyfin\Server\jellyfin.exe',
-    [string]$RepositoryUrl = 'https://raw.githubusercontent.com/KsH1/jellyfin-theme-manager/main/repository/manifest.json',
+    [string]$RepositoryUrl = 'https://raw.githubusercontent.com/joshualent/jellyfin-theme-manager/main/repository/manifest.json',
     [int]$Port = 18202
 )
 # The way other servers get the plugin: add the repository, install from the catalog, restart.
 # Checks the plugin is active with the published version, shows its logo and installs the standard themes.
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$guid = '8fa53208-c9f3-4e99-9858-2963ed658aae'
+$guid = '267f4d8e-f04c-49ab-9373-f721912cee86'
 # raw.githubusercontent.com keeps a copy for up to five minutes (separately for compressed requests, and query strings
 # do not bypass it). Wait until it serves the version in this checkout's repository/manifest.json.
 $localManifest = Join-Path $projectRoot 'repository\manifest.json'

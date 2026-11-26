@@ -1,22 +1,26 @@
 [CmdletBinding()]
 param(
     # The Jellyfin server version to build for. A plugin only loads on the version it was built for.
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$JellyfinVersion = '12.2.0'
+    # Defaults to DefaultJellyfinVersion in Directory.Build.props.
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$JellyfinVersion
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 # The only place the version is set is Directory.Build.props.
-$version = ([xml](Get-Content -LiteralPath (Join-Path $projectRoot 'Directory.Build.props') -Raw)).Project.PropertyGroup.Version + '.0'
+$props = ([xml](Get-Content -LiteralPath (Join-Path $projectRoot 'Directory.Build.props') -Raw)).Project.PropertyGroup
+$version = $props.Version + '.0'
+$defaultJellyfin = $props.DefaultJellyfinVersion
+if (!$JellyfinVersion) { $JellyfinVersion = $defaultJellyfin }
 Push-Location $projectRoot
 try {
     dotnet restore ThemeManager.slnx --locked-mode
     if ($LASTEXITCODE) { throw 'Restore failed.' }
     dotnet test ThemeManager.slnx -c Release --no-restore
     if ($LASTEXITCODE) { throw 'Tests failed.' }
-    $suffix = if ($JellyfinVersion -ne '12.2.0') { "-jf$JellyfinVersion" } else { '' }
-    $artifactRoot = Join-Path $projectRoot ('artifacts\build-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + $suffix)
-    # 12.2 builds into bin/ (used by the test scripts); other versions build into the artifact folder only.
-    $output = if ($JellyfinVersion -eq '12.2.0') { Join-Path $projectRoot 'src\Jellyfin.Plugin.ThemeManager\bin\Release\net10.0' } else { Join-Path $artifactRoot 'bin' }
+    $suffix = if ($JellyfinVersion -ne $defaultJellyfin) { "-jf$JellyfinVersion" } else { '' }
+    $artifactRoot = Join-Path $projectRoot ('artifacts/build-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + $suffix)
+    # The default Jellyfin version builds into bin/ (used by the test scripts); other versions build into the artifact folder only.
+    $output = if ($JellyfinVersion -eq $defaultJellyfin) { Join-Path $projectRoot 'src/Jellyfin.Plugin.ThemeManager/bin/Release/net10.0' } else { Join-Path $artifactRoot 'bin' }
     dotnet restore src/Jellyfin.Plugin.ThemeManager --locked-mode -p:JellyfinVersion=$JellyfinVersion
     if ($LASTEXITCODE) { throw 'Restore failed.' }
     dotnet build src/Jellyfin.Plugin.ThemeManager -c Release --no-restore -p:JellyfinVersion=$JellyfinVersion -o $output
@@ -36,10 +40,10 @@ try {
     New-Item -ItemType Directory -Path $sourceStage | Out-Null
     $sourceFiles=@()
     foreach ($directory in @('src','tests','scripts','docs','examples','.github')) {
-        $sourceFiles+=Get-ChildItem -LiteralPath (Join-Path $projectRoot $directory) -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.Name -ne 'PROD-INSTALL.md' }
+        $sourceFiles+=Get-ChildItem -Force -LiteralPath (Join-Path $projectRoot $directory) -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and $_.Name -ne 'PROD-INSTALL.md' }
     }
     foreach ($name in @('README.md','LICENSE','Directory.Build.props','ThemeManager.slnx','.gitignore')) {
-        $sourceFiles+=Get-Item -LiteralPath (Join-Path $projectRoot $name)
+        $sourceFiles+=Get-Item -Force -LiteralPath (Join-Path $projectRoot $name)
     }
     foreach ($file in $sourceFiles) {
         $target=Join-Path $sourceStage ([IO.Path]::GetRelativePath($projectRoot,$file.FullName))
@@ -54,7 +58,7 @@ try {
     Write-Output "Built for Jellyfin $JellyfinVersion. The plugin ZIP contains no private media, credentials or Jellyfin binaries."
 }
 finally {
-    # Leave obj/ restored for the default 12.2 build, which the IDE and test scripts use.
-    if ($JellyfinVersion -ne '12.2.0') { dotnet restore src/Jellyfin.Plugin.ThemeManager --locked-mode | Out-Null }
+    # Leave obj/ restored for the default build, which the IDE and test scripts use.
+    if ($JellyfinVersion -ne $defaultJellyfin) { dotnet restore src/Jellyfin.Plugin.ThemeManager --locked-mode | Out-Null }
     Pop-Location
 }
