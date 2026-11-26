@@ -59,7 +59,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $zips = Get-ChildItem repository -Filter "theme-manager_$env:VERSION*.zip" | ForEach-Object FullName
+          $zips = @(Get-ChildItem repository -Filter "theme-manager_$env:VERSION*.zip" | ForEach-Object FullName)
           if ($zips.Count -ne ($env:JELLYFIN_VERSIONS -split ' ').Count) { throw "Expected one ZIP per Jellyfin version, found $($zips.Count)." }
           gh release create '${{ github.ref_name }}' @zips --title "Theme Manager $env:VERSION" --notes $env:CHANGELOG
           if ($LASTEXITCODE) { throw 'Creating the release failed.' }
