@@ -3,7 +3,7 @@
 <div id="themeManagerPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select">
   <div data-role="content"><div class="content-primary" style="max-width:1100px;margin:auto">
     <h1>Theme Manager <small>preview</small></h1>
-    <p>Seasonal artwork, permanent palettes and personal themes for Jellyfin Web. Each user chooses their own theme; server branding, Custom CSS and library images are not changed.</p>
+    <p>Seasonal artwork, permanent palettes and personal themes for Jellyfin Web. Each user chooses their own theme; Custom CSS is never changed; library images and the splash screen only when you switch that on under <i>TV and mobile apps</i>.</p>
     <p class="tm-status" role="status" aria-live="polite"></p>
     <p class="tm-pending" hidden style="padding:.8em 1em;border-left:4px solid #ffb74d;background:#ffb74d22;font-weight:600"></p>
     <details class="tm-health" style="margin:.5em 0 1em"><summary style="cursor:pointer">Status</summary><dl class="tm-health-list" style="display:grid;grid-template-columns:max-content 1fr;gap:.3em 1.2em;margin:.8em 0"></dl></details>
@@ -12,9 +12,13 @@
     <label style="display:flex;gap:.5em;align-items:center;margin:.8em 0"><input class="tm-web-enabled" type="checkbox" /> Show themes in the normal Jellyfin Web address (needs the File Transformation plugin)</label>
     <p>Always available: <a class="tm-web-link" target="_blank" rel="noopener"></a>. TV and mobile apps with their own interface do not show personal themes.</p>
     <h2>TV and mobile apps</h2>
-    <p>Apps with their own interface (Android TV, Swiftfin, Roku and others) cannot show a personal theme. Theme Manager can instead set each library's image from the <b>server default</b> theme, changing with the calendar. The original images are backed up first and put back when you switch this off.</p>
+    <p>Apps with their own interface (Android TV, Swiftfin, Roku and others) cannot show a personal theme or colours. Theme Manager can instead theme the images they take from the server, from the <b>server default</b> theme, changing with the calendar. The original images are backed up first and put back when you switch this off. The official Jellyfin Android and iOS apps show Jellyfin Web, so they get each user's own theme like a browser.</p>
     <p style="padding:.6em 1em;border-left:3px solid #ffb74d;background:#ffb74d18">Switch off other tools that change library images first, for example a scheduled script, or they will overwrite each other.</p>
     <label style="display:flex;gap:.5em;align-items:center;margin:.8em 0"><input class="tm-apps-enabled" type="checkbox" /> Set library images for TV and mobile apps</label>
+    <div style="margin:0 0 .8em 1.8em">
+      <label style="display:flex;gap:.5em;align-items:center;margin:.4em 0"><input class="tm-apps-backdrops" type="checkbox" /> Also library backgrounds and thumbnails (the full-screen background Android TV and Roku show for a library)</label>
+      <label style="display:flex;gap:.5em;align-items:center;margin:.4em 0"><input class="tm-apps-splash" type="checkbox" /> Use the theme background as the server splash screen (Android TV start and login screens, Swiftfin sign-in, Roku's "Splashscreen Image" background). Changes Branding; your own splash screen is put back when switched off.</label>
+    </div>
     <p class="tm-apps-state" style="opacity:.85"></p>
     <button class="tm-apps-apply raised" is="emby-button" type="button">Apply now</button>
     <button class="tm-apps-restore raised" is="emby-button" type="button">Restore original images</button>
@@ -242,6 +246,8 @@
     async function serverImages(result) {
       const info = await api('Admin/ServerImages');
       el('.tm-apps-enabled').checked = info.enabled;
+      el('.tm-apps-backdrops').checked = info.libraryBackdrops;
+      el('.tm-apps-splash').checked = info.splashscreen;
       el('.tm-apps-apply').disabled = !info.enabled;
       el('.tm-apps-state').textContent = info.enabled ? 'On. ' + describeRun(result || info.lastRun) : 'Off. Library images are not changed by Theme Manager.' + (result?.restored?.length ? ' Restored: ' + result.restored.join(', ') + '.' : '');
     }
@@ -268,8 +274,15 @@
       const on = el('.tm-apps-enabled').checked;
       if (!on && !confirm('Switch off and put the original library images back?')) { el('.tm-apps-enabled').checked = true; return; }
       status(on ? 'Setting library images…' : 'Restoring original library images…');
-      const result = await api('Admin/ServerImages', 'PUT', { enabled: on }); await serverImages(result);
+      const result = await api('Admin/ServerImages', 'PUT', appsSetting(on)); await serverImages(result);
       status(on ? 'Library images follow the server default theme. Apps show them after a refresh.' : 'Original library images restored.');
+    }));
+    function appsSetting(on) { return { enabled: on, libraryBackdrops: el('.tm-apps-backdrops').checked, splashscreen: el('.tm-apps-splash').checked }; }
+    for (const option of ['.tm-apps-backdrops', '.tm-apps-splash']) el(option).addEventListener('change', run(async () => {
+      const on = el('.tm-apps-enabled').checked;
+      status(on ? 'Updating images for apps…' : 'Saved.');
+      await serverImages(await api('Admin/ServerImages', 'PUT', appsSetting(on)));
+      if (on) status('Done. Apps show the change after a refresh.');
     }));
     el('.tm-apps-apply').addEventListener('click', run(async () => { status('Setting library images…'); await serverImages(await api('Admin/ServerImages/Apply', 'POST')); status('Done.'); }));
     el('.tm-apps-restore').addEventListener('click', run(async () => {

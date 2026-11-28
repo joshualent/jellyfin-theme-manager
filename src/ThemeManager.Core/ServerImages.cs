@@ -57,6 +57,34 @@ public static class LibraryBanners
     }
 }
 
+/// <summary>
+/// Key of one library image in <see cref="ServerImageState"/>. The Primary image keeps the bare library id (the key
+/// older versions wrote); other image types are "libraryId:Type", e.g. "...:Backdrop".
+/// </summary>
+public static class AppImageKeys
+{
+    public const string Primary = "Primary";
+    public static string For(string libraryId, string imageType) =>
+        imageType == Primary ? libraryId : libraryId + ":" + imageType;
+    public static (string LibraryId, string ImageType) Parse(string key)
+    {
+        var colon = key.IndexOf(':', StringComparison.Ordinal);
+        return colon < 0 ? (key, Primary) : (key[..colon], key[(colon + 1)..]);
+    }
+}
+
+/// <summary>What the plugin did to the server's splash screen, so it can be undone.</summary>
+public sealed record SplashRecord
+{
+    /// <summary>Branding's custom splash screen path before the plugin set its own; null for Jellyfin's generated one.</summary>
+    public string? OriginalLocation { get; init; }
+    /// <summary>Whether the splash screen was switched on before the plugin switched it on.</summary>
+    public bool OriginalEnabled { get; init; }
+    /// <summary>The splash file the plugin set, and the theme asset revision it came from.</summary>
+    public string? Path { get; init; }
+    public string? Applied { get; init; }
+}
+
 /// <summary>What the plugin did to one library's image, so it can be undone.</summary>
 public sealed record LibraryImageRecord
 {
@@ -87,12 +115,32 @@ public sealed class ServerImageState(string root)
         File.Move(temporary, FilePath, overwrite: true);
     }
 
+    private string SplashPath => Path.Combine(Root, "splash.json");
+
+    public SplashRecord? LoadSplash()
+    {
+        try { return File.Exists(SplashPath) ? JsonSerializer.Deserialize<SplashRecord>(File.ReadAllText(SplashPath), ThemeJson.Options) : null; }
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>Saves the splash record; null removes it.</summary>
+    public void SaveSplash(SplashRecord? record)
+    {
+        if (record is null) { if (File.Exists(SplashPath)) File.Delete(SplashPath); return; }
+        Directory.CreateDirectory(Root);
+        var temporary = SplashPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(record, ThemeJson.Options));
+        File.Move(temporary, SplashPath, overwrite: true);
+    }
+
     /// <summary>Copies the library's current image into the backup folder and returns the copy's path.</summary>
-    public string Backup(string libraryId, string imagePath)
+    public string Backup(string libraryId, string imagePath, string imageType = AppImageKeys.Primary)
     {
         Directory.CreateDirectory(Root);
         if (!Guid.TryParse(libraryId, out var id)) throw new ArgumentException("A library id is a GUID.", nameof(libraryId));
-        var target = Path.Combine(Root, "original-" + id.ToString("N") + Path.GetExtension(imagePath).ToLowerInvariant());
+        if (!imageType.All(char.IsAsciiLetter)) throw new ArgumentException("An image type is letters only.", nameof(imageType));
+        var suffix = imageType == AppImageKeys.Primary ? "" : "-" + imageType.ToLowerInvariant();
+        var target = Path.Combine(Root, "original-" + id.ToString("N") + suffix + Path.GetExtension(imagePath).ToLowerInvariant());
         File.Copy(imagePath, target, overwrite: true);
         return target;
     }

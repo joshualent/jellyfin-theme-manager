@@ -53,6 +53,46 @@ public sealed class ServerImagesTests : IDisposable
     public void BackupRejectsNonGuidIds() => Assert.Throws<ArgumentException>(() => new ServerImageState(_root).Backup("../x", "y.png"));
 
     [Fact]
+    public void PrimaryKeepsTheBareLibraryIdOtherTypesGetASuffix()
+    {
+        var id = Guid.NewGuid().ToString();
+        Assert.Equal(id, AppImageKeys.For(id, AppImageKeys.Primary));
+        Assert.Equal(id + ":Backdrop", AppImageKeys.For(id, "Backdrop"));
+        Assert.Equal((id, "Primary"), AppImageKeys.Parse(id));
+        Assert.Equal((id, "Thumb"), AppImageKeys.Parse(AppImageKeys.For(id, "Thumb")));
+    }
+
+    [Fact]
+    public void BackupsOfDifferentImageTypesDoNotOverwriteEachOther()
+    {
+        var state = new ServerImageState(_root);
+        Directory.CreateDirectory(_root);
+        var primary = Path.Combine(_root, "p.png"); File.WriteAllText(primary, "primary");
+        var backdrop = Path.Combine(_root, "b.png"); File.WriteAllText(backdrop, "backdrop");
+        var id = Guid.NewGuid().ToString();
+        var first = state.Backup(id, primary);
+        var second = state.Backup(id, backdrop, "Backdrop");
+        Assert.NotEqual(first, second);
+        Assert.Equal("primary", File.ReadAllText(first));
+        Assert.Equal("backdrop", File.ReadAllText(second));
+        Assert.Throws<ArgumentException>(() => state.Backup(id, backdrop, "../Backdrop"));
+    }
+
+    [Fact]
+    public void SplashRecordRoundTripsAndNullRemovesIt()
+    {
+        var state = new ServerImageState(_root);
+        Assert.Null(state.LoadSplash());
+        state.SaveSplash(new() { OriginalLocation = "/data/splashscreen-upload.png", OriginalEnabled = false, Path = "/x/splash.webp", Applied = "rev" });
+        var loaded = state.LoadSplash();
+        Assert.Equal("/data/splashscreen-upload.png", loaded!.OriginalLocation);
+        Assert.False(loaded.OriginalEnabled);
+        Assert.Equal("rev", loaded.Applied);
+        state.SaveSplash(null);
+        Assert.Null(state.LoadSplash());
+    }
+
+    [Fact]
     public void UnreadableStateIsEmptyNotAnError()
     {
         Directory.CreateDirectory(_root); File.WriteAllText(Path.Combine(_root, "state.json"), "{ broken");

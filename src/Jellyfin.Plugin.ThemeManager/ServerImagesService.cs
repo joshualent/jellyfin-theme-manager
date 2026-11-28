@@ -1,9 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
 using MediaBrowser.Common.Api;
+using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Drawing;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Branding;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Authorization;
@@ -17,12 +20,21 @@ namespace Jellyfin.Plugin.ThemeManager;
 public sealed record ServerImagesRun(DateTimeOffset At, string? ThemeId, IReadOnlyList<string> Changed, IReadOnlyList<string> Restored, string? Error);
 
 /// <summary>
-/// Sets library Primary images from the server default theme, for TV and mobile apps that do not run Jellyfin Web.
-/// Off by default. Before a library's image is first replaced it is copied to a backup; "Original Jellyfin", switching
-/// the feature off or Restore puts every backup back (or removes the image if the library had none).
+/// Themes what apps with their own interface (Android TV, Swiftfin, Roku, Findroid ...) take from the server, from the
+/// server default theme. Off by default.
+/// <list type="bullet">
+/// <item>Library Primary image: the library tile in every app.</item>
+/// <item>Library Thumb and Backdrop (<see cref="PluginConfiguration.AppLibraryBackdrops"/>): Swiftfin's landscape tiles;
+/// the full-screen background Android TV shows while a library tile is focused and Roku shows inside the library.</item>
+/// <item>Server splash screen (<see cref="PluginConfiguration.AppSplashscreen"/>, off by default because it changes
+/// branding): Android TV's start and login screens, Swiftfin's sign-in screen, Roku's optional app background.</item>
+/// </list>
+/// Every image is backed up before it is first replaced; "Original Jellyfin", switching off or Restore puts it back.
 /// </summary>
-public sealed class ServerImagesService(ILibraryManager libraries, IProviderManager providers, IImageEncoder encoder, ThemeCatalog catalog, ScheduleStore schedules, ServerImageState state, ILogger<ServerImagesService> logger)
+public sealed class ServerImagesService(ILibraryManager libraries, IProviderManager providers, IImageEncoder encoder, IServerConfigurationManager configuration, ThemeCatalog catalog, ScheduleStore schedules, ServerImageState state, ILogger<ServerImagesService> logger)
 {
+    private const string Thumb = nameof(ImageType.Thumb), Backdrop = nameof(ImageType.Backdrop);
+    private const string SplashName = "Splash screen";
     private readonly SemaphoreSlim _gate = new(1, 1);
     public ServerImagesRun? LastRun { get; private set; }
 
@@ -33,12 +45,14 @@ public sealed class ServerImagesService(ILibraryManager libraries, IProviderMana
         {
             var plugin = Plugin.Instance;
             if (!plugin.Configuration.ServerWideImages) return LastRun = new(DateTimeOffset.UtcNow, null, [], [], null);
+            var extras = plugin.Configuration.AppLibraryBackdrops;
             var date = SeasonalCalendar.LocalDate(DateTimeOffset.UtcNow, plugin.Configuration.TimeZoneId);
             var snapshot = catalog.Snapshot;
             var shared = (await schedules.GetSharedAsync(cancellationToken).ConfigureAwait(false)).ToDictionary(s => s.Id, StringComparer.Ordinal);
             // Apps cannot show a personal theme, so this is always what a user who follows the server default would see.
             var themeId = ThemeResolver.Resolve(new(), plugin.ServerChoice, snapshot, date, shared, plugin.AutomaticExcluded).ThemeId;
             var theme = themeId is null ? null : snapshot.Themes.GetValueOrDefault(themeId);
+            var background = theme?.Assets.GetValueOrDefault("background");
             var folders = libraries.GetVirtualFolders().Where(f => Guid.TryParse(f.ItemId, out _)).ToList();
             var slots = Slots(folders);
             var records = state.Load();
@@ -47,49 +61,119 @@ public sealed class ServerImagesService(ILibraryManager libraries, IProviderMana
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 slots.TryGetValue(folder.ItemId, out var slot);
-                if (slot == LibraryBanners.None)
+                ResolvedAsset? banner = null;
+                // The administrator keeps this library's own images: no banner, no background.
+                var keepOwn = slot == LibraryBanners.None;
+                if (!keepOwn)
                 {
-                    // The administrator keeps this library's own image.
-                    if (await RestoreAsync(folder.ItemId, records, cancellationToken).ConfigureAwait(false)) restored.Add(folder.Name);
-                    continue;
+                    var themed = theme is not null && slot is not null ? theme.Assets.GetValueOrDefault(slot) : null;
+                    // Libraries without a themed banner (e.g. Music) get a generic one: the theme background with the library name.
+                    banner = themed ?? (background is not null ? GenericBanner(folder.ItemId, folder.Name, background) : null);
                 }
-                var themed = theme is not null && slot is not null ? theme.Assets.GetValueOrDefault(slot) : null;
-                // Libraries without a themed banner (e.g. Music) get a generic one: the theme background with the library name.
-                var asset = themed ?? (theme?.Assets.GetValueOrDefault("background") is { } background ? GenericBanner(folder.ItemId, folder.Name, background) : null);
-                if (asset is null)
+                var wanted = new (string Type, ResolvedAsset? Asset)[]
                 {
-                    // No themed banner for this library today: give back what it had.
-                    if (await RestoreAsync(folder.ItemId, records, cancellationToken).ConfigureAwait(false)) restored.Add(folder.Name);
-                    continue;
-                }
-                if (libraries.GetItemById(Guid.Parse(folder.ItemId)) is not { } item) continue;
-                records.TryGetValue(folder.ItemId, out var record);
-                if (record?.Applied == asset.Revision && item.HasImage(ImageType.Primary, 0)) continue;
-                if (record is null)
+                    (AppImageKeys.Primary, banner),
+                    (Thumb, extras ? banner : null),
+                    (Backdrop, extras && !keepOwn ? background : null),
+                };
+                foreach (var (type, asset) in wanted)
                 {
-                    // First change to this library: keep its own image (or the fact that it had none).
-                    var current = item.HasImage(ImageType.Primary, 0) ? item.GetImagePath(ImageType.Primary, 0) : null;
-                    record = new() { Backup = current is not null && File.Exists(current) ? state.Backup(folder.ItemId, current) : null };
-                    records[folder.ItemId] = record;
-                    state.Save(records);
+                    var label = type == AppImageKeys.Primary ? folder.Name : folder.Name + " (" + type.ToLowerInvariant() + ")";
+                    var key = AppImageKeys.For(folder.ItemId, type);
+                    if (asset is null)
+                    {
+                        // Nothing themed for this image today: give back what it had.
+                        if (await RestoreAsync(key, records, cancellationToken).ConfigureAwait(false)) restored.Add(label);
+                    }
+                    else if (await SetAsync(folder.ItemId, type, asset, records, cancellationToken).ConfigureAwait(false)) changed.Add(label);
                 }
-                await using (var stream = File.OpenRead(asset.Path))
-                    await providers.SaveImage(item, stream, asset.ContentType, ImageType.Primary, null, cancellationToken).ConfigureAwait(false);
-                await item.UpdateToRepositoryAsync(ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
-                records[folder.ItemId] = record with { Applied = asset.Revision };
-                state.Save(records);
-                changed.Add(folder.Name);
+            }
+            switch (await ApplySplashAsync(plugin.Configuration.AppSplashscreen ? background : null, cancellationToken).ConfigureAwait(false))
+            {
+                case true: changed.Add(SplashName); break;
+                case false: restored.Add(SplashName); break;
             }
             if (changed.Count + restored.Count > 0)
-                logger.LogInformation("Theme Manager set library images for apps from theme {Theme}: changed {Changed}; restored {Restored}", themeId ?? "(original)", string.Join(", ", changed), string.Join(", ", restored));
+                logger.LogInformation("Theme Manager set images for apps from theme {Theme}: changed {Changed}; restored {Restored}", themeId ?? "(original)", string.Join(", ", changed), string.Join(", ", restored));
             return LastRun = new(DateTimeOffset.UtcNow, themeId, changed, restored, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "Theme Manager could not set library images for apps; library images are left as they were");
+            logger.LogError(ex, "Theme Manager could not set images for apps; images not yet changed are left as they were");
             return LastRun = new(DateTimeOffset.UtcNow, null, [], [], ex.Message);
         }
         finally { _gate.Release(); }
+    }
+
+    /// <summary>Sets one library image from a theme asset, backing up the library's own image first. True if it changed.</summary>
+    private async Task<bool> SetAsync(string libraryId, string type, ResolvedAsset asset, Dictionary<string, LibraryImageRecord> records, CancellationToken cancellationToken)
+    {
+        if (libraries.GetItemById(Guid.Parse(libraryId)) is not { } item) return false;
+        var imageType = Enum.Parse<ImageType>(type);
+        var key = AppImageKeys.For(libraryId, type);
+        records.TryGetValue(key, out var record);
+        if (record?.Applied == asset.Revision && item.HasImage(imageType, 0)) return false;
+        if (record is null)
+        {
+            // First change to this image: keep the library's own (or the fact that it had none).
+            var current = item.HasImage(imageType, 0) ? item.GetImagePath(imageType, 0) : null;
+            record = new() { Backup = current is not null && File.Exists(current) ? state.Backup(libraryId, current, type) : null };
+            records[key] = record;
+            state.Save(records);
+        }
+        await using (var stream = File.OpenRead(asset.Path))
+            await providers.SaveImage(item, stream, asset.ContentType, imageType, 0, cancellationToken).ConfigureAwait(false);
+        await item.UpdateToRepositoryAsync(ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
+        records[key] = record with { Applied = asset.Revision };
+        state.Save(records);
+        return true;
+    }
+
+    /// <summary>
+    /// Points branding's splash screen at the theme background (switching it on), or with null puts back what it was.
+    /// True: set; false: restored; null: nothing to do. An administrator's own upload made since is kept as the original.
+    /// </summary>
+    private async Task<bool?> ApplySplashAsync(ResolvedAsset? background, CancellationToken cancellationToken)
+    {
+        var record = state.LoadSplash();
+        var branding = configuration.GetConfiguration<BrandingOptions>("branding");
+        if (background is null)
+        {
+            if (record is null) return null;
+            RestoreSplash(record, branding);
+            return false;
+        }
+        if (record is not null && record.Applied == background.Revision && branding.SplashscreenLocation == record.Path && branding.SplashscreenEnabled && File.Exists(record.Path)) return null;
+        // Someone else changed the splash screen since: that is the new original.
+        if (record is not null && branding.SplashscreenLocation != record.Path)
+            record = record with { OriginalLocation = branding.SplashscreenLocation, OriginalEnabled = branding.SplashscreenEnabled };
+        record ??= new() { OriginalLocation = branding.SplashscreenLocation, OriginalEnabled = branding.SplashscreenEnabled };
+        var folder = Path.Combine(state.Root, "splash");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "splashscreen-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(background.Revision)))[..16].ToLowerInvariant() + Path.GetExtension(background.Path).ToLowerInvariant());
+        await using (var source = File.OpenRead(background.Path))
+        await using (var target = File.Create(path))
+            await source.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
+        branding.SplashscreenLocation = path;
+        branding.SplashscreenEnabled = true;
+        configuration.SaveConfiguration("branding", branding);
+        state.SaveSplash(record with { Path = path, Applied = background.Revision });
+        foreach (var old in Directory.EnumerateFiles(folder).Where(f => f != path)) File.Delete(old);
+        return true;
+    }
+
+    private void RestoreSplash(SplashRecord record, BrandingOptions branding)
+    {
+        // Only undo what is still the plugin's: an administrator's later upload stays.
+        if (branding.SplashscreenLocation == record.Path)
+        {
+            branding.SplashscreenLocation = record.OriginalLocation is { } original && File.Exists(original) ? original : null;
+            branding.SplashscreenEnabled = record.OriginalEnabled;
+            configuration.SaveConfiguration("branding", branding);
+        }
+        var folder = Path.Combine(state.Root, "splash");
+        if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        state.SaveSplash(null);
     }
 
     /// <summary>Banner slot per library (id as Jellyfin gives it), with the administrator's choices applied.</summary>
@@ -103,7 +187,7 @@ public sealed class ServerImagesService(ILibraryManager libraries, IProviderMana
             chosen.Where(c => byKey.ContainsKey(c.Key)).ToDictionary(c => byKey[c.Key], c => c.Value, StringComparer.Ordinal));
     }
 
-    /// <summary>Puts every library back as it was before the plugin changed it.</summary>
+    /// <summary>Puts every library image and the splash screen back as they were before the plugin changed them.</summary>
     public async Task<ServerImagesRun> RestoreAllAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -112,37 +196,49 @@ public sealed class ServerImagesService(ILibraryManager libraries, IProviderMana
             var records = state.Load();
             var names = libraries.GetVirtualFolders().ToDictionary(f => f.ItemId, f => f.Name, StringComparer.OrdinalIgnoreCase);
             List<string> restored = [];
-            foreach (var id in records.Keys.ToList())
-                if (await RestoreAsync(id, records, cancellationToken).ConfigureAwait(false)) restored.Add(names.GetValueOrDefault(id, id));
-            logger.LogInformation("Theme Manager restored the original library images: {Restored}", string.Join(", ", restored));
+            foreach (var key in records.Keys.ToList())
+            {
+                var (id, type) = AppImageKeys.Parse(key);
+                var name = names.GetValueOrDefault(id, id);
+                if (await RestoreAsync(key, records, cancellationToken).ConfigureAwait(false))
+                    restored.Add(type == AppImageKeys.Primary ? name : name + " (" + type.ToLowerInvariant() + ")");
+            }
+            if (state.LoadSplash() is { } splash)
+            {
+                RestoreSplash(splash, configuration.GetConfiguration<BrandingOptions>("branding"));
+                restored.Add(SplashName);
+            }
+            logger.LogInformation("Theme Manager restored the original images: {Restored}", string.Join(", ", restored));
             return LastRun = new(DateTimeOffset.UtcNow, null, [], restored, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "Theme Manager could not restore all original library images; the backups are kept in {Folder}", state.Root);
+            logger.LogError(ex, "Theme Manager could not restore all original images; the backups are kept in {Folder}", state.Root);
             return LastRun = new(DateTimeOffset.UtcNow, null, [], [], ex.Message);
         }
         finally { _gate.Release(); }
     }
 
-    private async Task<bool> RestoreAsync(string libraryId, Dictionary<string, LibraryImageRecord> records, CancellationToken cancellationToken)
+    private async Task<bool> RestoreAsync(string key, Dictionary<string, LibraryImageRecord> records, CancellationToken cancellationToken)
     {
-        if (!records.TryGetValue(libraryId, out var record)) return false;
+        if (!records.TryGetValue(key, out var record)) return false;
+        var (libraryId, type) = AppImageKeys.Parse(key);
+        var imageType = Enum.Parse<ImageType>(type);
         if (libraries.GetItemById(Guid.Parse(libraryId)) is { } item)
         {
             if (record.Backup is { } backup && File.Exists(backup))
             {
                 await using (var stream = File.OpenRead(backup))
-                    await providers.SaveImage(item, stream, MimeFor(backup), ImageType.Primary, null, cancellationToken).ConfigureAwait(false);
+                    await providers.SaveImage(item, stream, MimeFor(backup), imageType, 0, cancellationToken).ConfigureAwait(false);
             }
-            else if (item.HasImage(ImageType.Primary, 0))
+            else if (item.HasImage(imageType, 0))
             {
-                // The library had no image of its own before the plugin set one.
-                await item.DeleteImageAsync(ImageType.Primary, 0).ConfigureAwait(false);
+                // The library had no image of this type before the plugin set one.
+                await item.DeleteImageAsync(imageType, 0).ConfigureAwait(false);
             }
             await item.UpdateToRepositoryAsync(ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
         }
-        records.Remove(libraryId);
+        records.Remove(key);
         state.Save(records);
         if (record.Backup is { } used && File.Exists(used)) File.Delete(used);
         return true;
@@ -187,9 +283,9 @@ public sealed class ServerImagesService(ILibraryManager libraries, IProviderMana
 
 public sealed class ApplyServerImagesTask(ServerImagesService images) : IScheduledTask
 {
-    public string Name => "Set library images for apps";
+    public string Name => "Set images for apps";
     public string Key => "ThemeManagerServerImages";
-    public string Description => "When switched on in Theme Manager, sets each library's image from the server default theme for TV and mobile apps. Does nothing while switched off.";
+    public string Description => "When switched on in Theme Manager, sets library images (and optionally the splash screen) from the server default theme for TV and mobile apps. Does nothing while switched off.";
     public string Category => "Theme Manager";
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers() =>
     [
@@ -211,14 +307,21 @@ public sealed class ApplyServerImagesTask(ServerImagesService images) : ISchedul
 public sealed class ServerImagesController(ServerImagesService images) : ControllerBase
 {
     [HttpGet]
-    public IActionResult Get() => new JsonResult(new { Enabled = Plugin.Instance.Configuration.ServerWideImages, images.LastRun }, ThemeJson.Options);
+    public IActionResult Get()
+    {
+        var c = Plugin.Instance.Configuration;
+        return new JsonResult(new { Enabled = c.ServerWideImages, LibraryBackdrops = c.AppLibraryBackdrops, Splashscreen = c.AppSplashscreen, images.LastRun }, ThemeJson.Options);
+    }
 
     /// <summary>Switching on applies the theme now; switching off restores the original images.</summary>
     [HttpPut]
     public async Task<IActionResult> Set([FromBody] ServerImagesSetting setting, CancellationToken cancellationToken)
     {
         if (setting is null) return BadRequest();
-        Plugin.Instance.Configuration.ServerWideImages = setting.Enabled;
+        var c = Plugin.Instance.Configuration;
+        c.ServerWideImages = setting.Enabled;
+        if (setting.LibraryBackdrops is { } backdrops) c.AppLibraryBackdrops = backdrops;
+        if (setting.Splashscreen is { } splash) c.AppSplashscreen = splash;
         Plugin.Instance.SaveConfiguration();
         var run = setting.Enabled ? await images.ApplyAsync(cancellationToken).ConfigureAwait(false) : await images.RestoreAllAsync(cancellationToken).ConfigureAwait(false);
         return new JsonResult(run, ThemeJson.Options);
@@ -275,5 +378,5 @@ public sealed class LibraryBannersController(ILibraryManager libraries, ServerIm
     }
 }
 
-public sealed record ServerImagesSetting(bool Enabled);
+public sealed record ServerImagesSetting(bool Enabled, bool? LibraryBackdrops = null, bool? Splashscreen = null);
 public sealed record LibraryBannerSetting(string? Banner);

@@ -20,6 +20,10 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     public bool ShowInWebClient { get; set; } = true;
     /// <summary>Set library images from the server default theme, for TV and mobile apps. Off until an administrator switches it on.</summary>
     public bool ServerWideImages { get; set; }
+    /// <summary>With <see cref="ServerWideImages"/>: also each library's Thumb and Backdrop (the background TV apps show for a library).</summary>
+    public bool AppLibraryBackdrops { get; set; } = true;
+    /// <summary>With <see cref="ServerWideImages"/>: use the theme background as the server splash screen. Changes branding, so off until switched on.</summary>
+    public bool AppSplashscreen { get; set; }
     /// <summary>Seasonal effects (snow, leaves, hearts, confetti) in Jellyfin Web. Off until an administrator switches them on; each user can still switch them off.</summary>
     public bool AllowEffects { get; set; }
     /// <summary>Theme ids left out of the theme picker. Users who already chose one keep it, and calendars still use it.</summary>

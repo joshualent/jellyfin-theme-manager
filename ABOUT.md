@@ -1,6 +1,6 @@
 # About Theme Manager
 
-Theme Manager is a Jellyfin 12.4 server plugin that adds themes to **Jellyfin Web**: colours, a background image and themed library banners. Each user picks their own theme. Server branding, Custom CSS and your library images stay untouched unless you switch that on.
+Theme Manager is a Jellyfin 12.4 server plugin that adds themes to **Jellyfin Web**: colours, a background image and themed library banners. Each user picks their own theme. Custom CSS is never changed. Library images and the splash screen change only if you switch that on.
 
 ## What you get
 
@@ -15,7 +15,13 @@ Theme Manager is a Jellyfin 12.4 server plugin that adds themes to **Jellyfin We
 
 ## TV and mobile apps
 
-Apps with their own interface (Android TV, Swiftfin, Roku and others) can't show personal themes. If you turn the option on, Theme Manager can set each library's image from the **server default** theme and update it nightly. It backs up the original images first and can restore them exactly.
+- **Jellyfin's Android and iOS phone apps** show Jellyfin Web, so they get each user's own theme like a browser (with File Transformation).
+- **Native apps** (Android TV, Swiftfin, Roku and others) draw their own screens, so they can't show colours or personal themes. Turn on **Set library images for TV and mobile apps** and Theme Manager themes what these apps take from the server, from the **server default** theme, updated nightly:
+  - **Library tiles**: the themed banner.
+  - **Library backgrounds and thumbnails**: the full-screen background Android TV shows for a focused library and Roku shows inside a library.
+  - **Splash screen** (optional): the Android TV start and login screens, the Swiftfin sign-in screen, and Roku's "Splashscreen Image" background.
+
+  Originals are backed up first and restored exactly. Details per app are in [docs/NATIVE-APPS.md](docs/NATIVE-APPS.md).
 
 ## How it shows up
 
